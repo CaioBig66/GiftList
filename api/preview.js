@@ -92,7 +92,18 @@ function extract(html, base) {
     meta(html, ['product:price:amount', 'og:price:amount']) ||
     (offer && (offer.price || offer.lowPrice)) || amzPrice || ''
   );
-  return { title, image, price };
+  const strip = t => dec(String(t || '').replace(/<[^>]+>/g, ' '));
+  const bullets = (html.match(/id=["']feature-bullets["'][\s\S]*?<\/ul>/i) || [''])[0]
+    .match(/<span class=["']a-list-item["'][^>]*>([\s\S]*?)<\/span>/gi);
+  const amzDesc = bullets ? bullets.map(strip).filter(Boolean).map(x => '• ' + x).join('\n') : '';
+  const cands = [
+    strip(ld && ld.description),
+    meta(html, ['og:description', 'twitter:description', 'description']),
+    amzDesc
+  ].filter(Boolean);
+  let description = cands.sort((a, b) => b.length - a.length)[0] || '';
+  if (description.length > 900) description = description.slice(0, 900).replace(/\s+\S*$/, '') + '...';
+  return { title, image, price, description };
 }
 
 async function grab(href, ua, ms) {
@@ -123,7 +134,7 @@ module.exports = async (req, res) => {
     return res.status(400).json({ error: 'Link não permitido.' });
   }
 
-  const best = { title: '', image: '', price: '' };
+  const best = { title: '', image: '', price: '', description: '' };
   let finalUrl = u.href, status = 0, lastErr = '';
   const start = Date.now();
 
@@ -137,6 +148,7 @@ module.exports = async (req, res) => {
       best.title = best.title || e.title;
       best.image = best.image || e.image;
       best.price = best.price || e.price;
+      if (e.description.length > best.description.length) best.description = e.description;
       if (best.title && best.image) break;
     } catch (err) {
       lastErr = err.name === 'AbortError' ? 'tempo esgotado' : String((err && err.message) || err);
@@ -154,6 +166,7 @@ module.exports = async (req, res) => {
         const t = dec(j.data.title || '');
         if (!BLOCKED_TITLE.test(t)) best.title = best.title || t;
         best.image = best.image || (j.data.image && j.data.image.url) || '';
+        best.description = best.description || dec(j.data.description || '');
       }
     } catch (e) { /* sem reserva */ }
   }
@@ -166,5 +179,5 @@ module.exports = async (req, res) => {
   }
   const host = new URL(finalUrl).hostname.replace(/^www\./, '');
   const store = host.split('.')[0].replace(/^./, c => c.toUpperCase());
-  return res.status(200).json({ title: best.title, image: best.image, price: best.price, store, url: finalUrl });
+  return res.status(200).json({ title: best.title, image: best.image, price: best.price, description: best.description, store, url: finalUrl });
 };
